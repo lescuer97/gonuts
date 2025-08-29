@@ -18,11 +18,12 @@ import (
 
 const (
 	// supported tags
-	SIGFLAG  = "sigflag"
-	NSIGS    = "n_sigs"
-	PUBKEYS  = "pubkeys"
-	LOCKTIME = "locktime"
-	REFUND   = "refund"
+	SIGFLAG    = "sigflag"
+	NSIGS      = "n_sigs"
+	PUBKEYS    = "pubkeys"
+	LOCKTIME   = "locktime"
+	REFUND     = "refund"
+	NSIGREFUND = "n_sigs_refund"
 
 	// SIGFLAG types
 	SIGINPUTS = "SIG_INPUTS"
@@ -54,11 +55,12 @@ type P2PKWitness struct {
 }
 
 type P2PKTags struct {
-	Sigflag  string
-	NSigs    int
-	Pubkeys  []*btcec.PublicKey
-	Locktime int64
-	Refund   []*btcec.PublicKey
+	Sigflag     string
+	NSigs       int
+	Pubkeys     []*btcec.PublicKey
+	Locktime    int64
+	Refund      []*btcec.PublicKey
+	NSigsRefund int
 }
 
 func SerializeP2PKTags(p2pkTags P2PKTags) [][]string {
@@ -95,7 +97,7 @@ func SerializeP2PKTags(p2pkTags P2PKTags) [][]string {
 }
 
 func ParseP2PKTags(tags [][]string) (*P2PKTags, error) {
-	if len(tags) > 5 {
+	if len(tags) > 6 {
 		return nil, TooManyTagsErr
 	}
 
@@ -158,6 +160,17 @@ func ParseP2PKTags(tags [][]string) (*P2PKTags, error) {
 				j++
 			}
 			p2pkTags.Refund = refundKeys
+		case NSIGREFUND:
+			nstr := tag[1]
+			nsig, err := strconv.ParseInt(nstr, 10, 8)
+			if err != nil {
+				errmsg := fmt.Sprintf("invalig n_sigs_refund value: %v", err)
+				return nil, cashu.BuildCashuError(errmsg, NUT11ErrCode)
+			}
+			if nsig < 0 {
+				return nil, NSigsMustBePositiveErr
+			}
+			p2pkTags.NSigsRefund = int(nsig)
 		}
 	}
 
@@ -401,4 +414,76 @@ func VerifyP2PKLockedProof(proof cashu.Proof, proofSecret nut10.WellKnownSecret)
 		}
 	}
 	return nil
+}
+
+type SigflagValidation struct {
+	sigFlag            string
+	signaturesRequired uint
+	pubkeys            map[*btcec.PublicKey]bool
+}
+
+func checkForSigAll(proofs cashu.Proofs) (SigflagValidation, error) {
+	sigFlagValidation := SigflagValidation{
+		sigFlag:            SIGINPUTS,
+		signaturesRequired: 0,
+		pubkeys:            make(map[*btcec.PublicKey]bool),
+	}
+	for _, proof := range proofs {
+		wellknownSecret, err := nut10.DeserializeSecret(proof.Secret)
+		if err != nil {
+			return sigFlagValidation, err
+		}
+
+		p2pkTags, err := ParseP2PKTags(wellknownSecret.Data.Tags)
+		if err != nil {
+			return sigFlagValidation, err
+		}
+
+		if p2pkTags != nil {
+			if p2pkTags.Sigflag == SIGALL {
+				sigFlagValidation.sigFlag = SIGALL
+			}
+			if sigFlagValidation.signaturesRequired < uint(p2pkTags.NSigs) {
+				sigFlagValidation.signaturesRequired = uint(p2pkTags.NSigs)
+			}
+
+			for _, pubkey := range p2pkTags.Pubkeys {
+				sigFlagValidation.pubkeys[pubkey] = true
+			}
+		}
+	}
+	return sigFlagValidation, nil
+}
+
+func verifySigAll(proofs cashu.Proofs) (SigflagValidation, error) {
+	sigFlagValidation := SigflagValidation{
+		sigFlag:            SIGINPUTS,
+		signaturesRequired: 0,
+		pubkeys:            make(map[*btcec.PublicKey]bool),
+	}
+	for _, proof := range proofs {
+		wellknownSecret, err := nut10.DeserializeSecret(proof.Secret)
+		if err != nil {
+			return sigFlagValidation, err
+		}
+
+		p2pkTags, err := ParseP2PKTags(wellknownSecret.Data.Tags)
+		if err != nil {
+			return sigFlagValidation, err
+		}
+
+		if p2pkTags != nil {
+			if p2pkTags.Sigflag == SIGALL {
+				sigFlagValidation.sigFlag = SIGALL
+			}
+			if sigFlagValidation.signaturesRequired < uint(p2pkTags.NSigs) {
+				sigFlagValidation.signaturesRequired = uint(p2pkTags.NSigs)
+			}
+
+			for _, pubkey := range p2pkTags.Pubkeys {
+				sigFlagValidation.pubkeys[pubkey] = true
+			}
+		}
+	}
+	return sigFlagValidation, nil
 }
