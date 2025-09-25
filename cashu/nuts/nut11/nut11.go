@@ -177,27 +177,34 @@ func ParseP2PKTags(tags [][]string) (*P2PKTags, error) {
 	return &p2pkTags, nil
 }
 
-func AddSignatureToInputs(inputs cashu.Proofs, signingKey *btcec.PrivateKey) (cashu.Proofs, error) {
-	for i, proof := range inputs {
-		hash := sha256.Sum256([]byte(proof.Secret))
-		signature, err := schnorr.Sign(signingKey, hash[:])
-		if err != nil {
-			return nil, err
-		}
-		signatureBytes := signature.Serialize()
+func AddSignatureToInput(input cashu.Proof, signingKey *btcec.PrivateKey) (cashu.Proof, error) {
+	hash := sha256.Sum256([]byte(input.Secret))
+	signature, err := schnorr.Sign(signingKey, hash[:])
+	if err != nil {
+		return cashu.Proof{}, err
+	}
+	signatureBytes := signature.Serialize()
 
-		p2pkWitness := P2PKWitness{
-			Signatures: []string{hex.EncodeToString(signatureBytes)},
-		}
-
-		witness, err := json.Marshal(p2pkWitness)
-		if err != nil {
-			return nil, err
-		}
-		proof.Witness = string(witness)
-		inputs[i] = proof
+	p2pkWitness := P2PKWitness{
+		Signatures: []string{hex.EncodeToString(signatureBytes)},
 	}
 
+	witness, err := json.Marshal(p2pkWitness)
+	if err != nil {
+		return cashu.Proof{}, err
+	}
+	input.Witness = string(witness)
+	return input, nil
+}
+
+func AddSignatureToInputs(inputs cashu.Proofs, signingKey *btcec.PrivateKey) (cashu.Proofs, error) {
+	for i, proof := range inputs {
+		signedProof, err := AddSignatureToInput(proof, signingKey)
+		if err != nil {
+			return nil, err
+		}
+		inputs[i] = signedProof
+	}
 	return inputs, nil
 }
 
